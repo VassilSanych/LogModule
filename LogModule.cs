@@ -10,11 +10,15 @@ using Module = Autofac.Module;
 
 namespace VGn.LogModule
 {
+	public class NLogModule : LogModule<NLogMiddleware>
+	{ }
+
+
 	/// <summary>
 	///  Модуль autofac для подключения логирования через NLog
 	/// </summary>
 	/// <remarks>именование логов по типу создаваемого класса</remarks>
-	public class LogModule<T> : Module where T : IResolveMiddleware, new()
+	public abstract class LogModule<T> : Module where T : IResolveMiddleware, new()
 	{
 		private readonly IResolveMiddleware _middleware;
 
