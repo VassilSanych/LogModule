@@ -1,72 +1,87 @@
 ﻿using System;
 using System.Linq;
-using Autofac;
+using System.Reflection;
 using Autofac.Core;
 using Autofac.Core.Registration;
+using Autofac.Core.Resolving.Pipeline;
 using NLog;
 using LogManager = NLog.LogManager;
+using Module = Autofac.Module;
 
 namespace VGn.LogModule
 {
-    /// <summary>
-    ///  Модуль autofac для подключения логирования через NLog
-    /// </summary>
-    /// <remarks>именование логов по типу создаваемого класса</remarks>
-    public class LogModule : Module
-    {
-        private ILogger CreateLoggerFor(Type type)
-        {
-            // cut generic type trash
-            var name = type.FullName?.Split('`')[0];
-            return LogManager.GetLogger(name);
-        }
+	/// <summary>
+	///  Модуль autofac для подключения логирования через NLog
+	/// </summary>
+	/// <remarks>именование логов по типу создаваемого класса</remarks>
+	public class LogModule<T> : Module where T : IResolveMiddleware, new()
+	{
+		private readonly IResolveMiddleware _middleware;
 
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="componentRegistry"></param>
-        /// <param name="registration"></param>
-        protected override void AttachToComponentRegistration(IComponentRegistryBuilder componentRegistry, IComponentRegistration registration)
-        {
-	        var type = registration.Activator.LimitType;
-            if (HasPropertyDependencyOnLogger(type))
-                registration.Activated += InjectLoggerViaProperty;
+		public LogModule()
+		{
+			_middleware = new T();
+		}
 
-            if (HasConstructorDependencyOnLogger(type))
-                registration.Preparing += InjectLoggerViaConstructor;
-        }
+		protected override void AttachToComponentRegistration(IComponentRegistryBuilder componentRegistryBuilder,
+			IComponentRegistration registration)
+		{
+			// Attach to the registration's pipeline build.
+			registration.PipelineBuilding += (sender, pipeline) =>
+			{
+				// Add our middleware to the pipeline.
+				pipeline.Use(_middleware);
+			};
+		}
+	}
 
-        private bool HasPropertyDependencyOnLogger(Type type)
-        {
-            return type.GetProperties()
-                .Any(property => property.CanWrite && property.PropertyType == typeof(ILogger));
-        }
 
-        private bool HasConstructorDependencyOnLogger(Type type)
-        {
-            return type.GetConstructors()
-                .SelectMany(constructor => constructor.GetParameters()
-                    .Where(parameter => parameter.ParameterType == typeof(ILogger)))
-                .Any();
-        }
 
-        private void InjectLoggerViaProperty(object sender, ActivatedEventArgs<object> @event)
-        {
-            var type = @event.Instance.GetType();
-            var propertyInfo = type.GetProperties()
-                .First(x => x.CanWrite && x.PropertyType == typeof(ILogger));
 
-            propertyInfo.SetValue(@event.Instance, CreateLoggerFor(type), null);
-        }
+	public class NLogMiddleware : IResolveMiddleware
+	{
+		public PipelinePhase Phase => PipelinePhase.ParameterSelection;
 
-        private void InjectLoggerViaConstructor(object sender, PreparingEventArgs @event)
-        {
-            var type = @event.Component.Activator.LimitType;
-            @event.Parameters = @event.Parameters.Union(new[]
-            {
-                new ResolvedParameter((parameter, context) => parameter.ParameterType == typeof(ILogger),
-                    (p, i) => CreateLoggerFor(type))
-            });
-        }
-    }
+		private ILogger CreateLoggerFor(Type type)
+		{
+			// cut generic type trash
+			var name = type.FullName?.Split('`')[0];
+			return LogManager.GetLogger(name);
+		}
+
+		public void Execute(ResolveRequestContext context, Action<ResolveRequestContext> next)
+		{
+			// Add our parameters.
+			context.ChangeParameters(context.Parameters.Union(
+				new[]
+				{
+					new ResolvedParameter(
+						(p, i) => p.ParameterType == typeof(ILogger),
+						(p, i) => CreateLoggerFor(p.Member.DeclaringType)
+					),
+				}));
+
+			// Continue the resolve.
+			next(context);
+
+			// Has an instance been activated?
+			if (context.NewInstanceActivated)
+			{
+				var instanceType = context.Instance.GetType();
+
+				// Get all the injectable properties to set.
+				// If you wanted to ensure the properties were only UNSET properties,
+				// here's where you'd do it.
+				var properties = instanceType
+					.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+					.Where(p => p.PropertyType == typeof(ILogger) && p.CanWrite && p.GetIndexParameters().Length == 0);
+
+				// Set the properties located.
+				foreach (var propToSet in properties)
+				{
+					propToSet.SetValue(context.Instance, CreateLoggerFor(instanceType), null);
+				}
+			}
+		}
+	}
 }
