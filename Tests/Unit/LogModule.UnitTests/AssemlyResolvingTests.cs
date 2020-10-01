@@ -1,4 +1,4 @@
-using System.Linq;
+п»їusing System.Linq;
 using System.Reflection;
 using Autofac;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -29,7 +29,7 @@ namespace LogModule.UnitTests
 			_container = null;
 		}
 
-		//Контейнер
+		//РљРѕРЅС‚РµР№РЅРµСЂ
 		private static void BuildSampleContainer()
 		{
 			var builder = new ContainerBuilder();
